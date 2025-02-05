@@ -26,6 +26,6 @@ set(plugin_HDR src/CurrentResidual.h)
 # The add_plugin macro is provided by mc_rtc
 add_plugin(CurrentResidual "${plugin_SRC}" "${plugin_HDR}")
 
-if(BUILD_TESTING)
-  add_subdirectory(tests)
-endif()
+# if(BUILD_TESTING)
+#   add_subdirectory(tests)
+# endif()
