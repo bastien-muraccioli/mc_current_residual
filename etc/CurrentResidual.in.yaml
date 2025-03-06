@@ -11,4 +11,6 @@ current_residual:
 
   gear_ratio: 100.0
 
-  k_obs: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  k_obs: 10
+  threshold_offset: 10.0
+  threshold_filtering: 0.005

@@ -16,12 +16,22 @@ void CurrentResidual::init(mc_control::MCGlobalController & controller, const mc
   auto & realRobot = ctl.realRobot(ctl.robots()[0].name());
   auto & rjo = robot.refJointOrder();
 
+  dt_ = ctl.timestep();
+  counter_ = 0.0;
   jointNumber = ctl.robot(ctl.robots()[0].name()).refJointOrder().size();
 
+  // Make sure to have obstacle detection
+  if(!ctl.controller().datastore().has("Obstacle detected"))
+  {
+    ctl.controller().datastore().make<bool>("Obstacle detected", false);
+  }
+
+  ctl.controller().datastore().make<bool>("Current Residual Obstacle detected", false);
+  
   auto plugin_config = config("current_residual");
 
   gear_ratio = plugin_config("gear_ratio", 100.0);
-  k_obs = plugin_config("k_obs");
+  k_obs = plugin_config("k_obs", 10.0);
   kt = plugin_config("kt");
   if(kt.empty())
   {
@@ -35,6 +45,9 @@ void CurrentResidual::init(mc_control::MCGlobalController & controller, const mc
       {"joint_7", 0.076}
     };
   }
+  threshold_filtering_ = plugin_config("threshold_filtering", 0.05);
+  threshold_offset_ = plugin_config("threshold_offset", 2.0);
+  lpf_threshold_.setValues(threshold_offset_, threshold_filtering_, jointNumber);
 
   // Get and print tau fric from datastore
   if(ctl.controller().datastore().has("torque_fric"))
@@ -64,6 +77,8 @@ void CurrentResidual::init(mc_control::MCGlobalController & controller, const mc
     qdot[i] = robot.alpha()[robot.jointIndexByName(rjo[i])][0];
   }
   residual.setZero(jointNumber);
+  residual_high_.setZero(jointNumber);
+  residual_low_.setZero(jointNumber);
   integralTerm.setZero(jointNumber);
 
   coriolis = new rbd::Coriolis(robot.mb());
@@ -88,7 +103,40 @@ void CurrentResidual::reset(mc_control::MCGlobalController & controller)
 
 void CurrentResidual::before(mc_control::MCGlobalController & controller)
 {
+  auto & ctl = static_cast<mc_control::MCGlobalController &>(controller);
+  counter_ += dt_;
+
+  if(activate_plot_ && !plot_added_)
+  {
+    addPlot(controller);
+    plot_added_ = true;
+  }
+
+  if(ctl.controller().datastore().has("Zurlo Collision Detection"))
+  {
+    collision_stop_activated_zurlo_ = ctl.controller().datastore().get<bool>("Zurlo Collision Detection");
+  }
+
   residual_computation(controller);
+  residual_high_ = lpf_threshold_.adaptiveThreshold(residual, true);
+  residual_low_ = lpf_threshold_.adaptiveThreshold(residual, false);
+  obstacle_detected_ = false;
+  for (int i = 0; i < jointNumber; i++)
+  {
+    if (residual[i] > residual_high_[i] || residual[i] < residual_low_[i])
+    {
+      obstacle_detected_ = true;
+      if (collision_stop_activated_)
+      {
+        ctl.controller().datastore().get<bool>("Obstacle detected") = obstacle_detected_;
+      }
+      break;
+    }
+  }
+  if (collision_stop_activated_zurlo_)
+  {
+    ctl.controller().datastore().get<bool>("Current Residual Obstacle detected") = obstacle_detected_;
+  }
 }
 
 void CurrentResidual::after(mc_control::MCGlobalController & controller)
@@ -153,7 +201,7 @@ void CurrentResidual::residual_computation(mc_control::MCGlobalController & cont
   forwardDynamics.computeC(realRobot.mb(), realRobot.mbc());
   forwardDynamics.computeH(realRobot.mb(), realRobot.mbc());
   auto coriolisMatrix = coriolis->coriolis(realRobot.mb(), realRobot.mbc());
-  auto coriolisGravityTerm = forwardDynamics.C(); //Coriolis + Gravity term
+  auto coriolisGravityTerm = forwardDynamics.C(); //C*qdot + g
 
   auto inertiaMatrix_prev = inertiaMatrix;
   inertiaMatrix = forwardDynamics.H() - forwardDynamics.HIr();
@@ -163,7 +211,15 @@ void CurrentResidual::residual_computation(mc_control::MCGlobalController & cont
 
   integralTerm += (tau_m - beta_regressor + residual) * ctl.timestep();
 
-  residual = k_obs.asDiagonal() * (pt - integralTerm + pzero);
+  residual = k_obs * Eigen::MatrixXd::Identity(jointNumber, jointNumber) * (pt - integralTerm - pzero);
+  if(!ctl.controller().datastore().has("current_residual"))
+  {
+    ctl.controller().datastore().make<Eigen::VectorXd>("current_residual", residual);
+  }
+  else
+  {
+    ctl.controller().datastore().assign("current_residual", residual);
+  }
 }
 
 void CurrentResidual::addGui(mc_control::MCGlobalController & controller)
@@ -171,8 +227,36 @@ void CurrentResidual::addGui(mc_control::MCGlobalController & controller)
   auto & ctl = static_cast<mc_control::MCGlobalController &>(controller);
 
   ctl.controller().gui()->addElement({"Plugins", "CurrentResidual"},
-                                     mc_rtc::gui::ArrayInput("k_obs", [this]() { return k_obs; },
-                                                             [this](const Eigen::VectorXd & k) { k_obs = k; }));
+    mc_rtc::gui::NumberInput("k_obs", [this]() { return k_obs; },
+      [this](double k) 
+      {
+        this->integralTerm.setZero();
+        this->residual.setZero();
+        this->k_obs = k;
+      }),
+    mc_rtc::gui::NumberInput("Residual shown", [this]() { return residual_shown_; },
+      [this](int r) 
+      {
+        this->residual_shown_ = r;
+      }),
+    mc_rtc::gui::Button("Add plot", [this]() { return activate_plot_ = true; }),
+    // Add checkbox to activate the collision stop
+    mc_rtc::gui::Checkbox("Collision stop", collision_stop_activated_), 
+    // Add Threshold offset input
+    mc_rtc::gui::NumberInput("Threshold offset", [this](){return this->threshold_offset_;},
+        [this](double offset)
+      { 
+        threshold_offset_ = offset;
+        lpf_threshold_.setOffset(threshold_offset_); 
+      }),
+    // Add Threshold filtering input
+    mc_rtc::gui::NumberInput("Threshold filtering", [this](){return this->threshold_filtering_;},
+        [this](double filtering)
+      { 
+        threshold_filtering_ = filtering;
+        lpf_threshold_.setFiltering(threshold_filtering_); 
+      })                                               
+    );
 }
 
 void CurrentResidual::addLog(mc_control::MCGlobalController & controller)
@@ -180,6 +264,26 @@ void CurrentResidual::addLog(mc_control::MCGlobalController & controller)
   auto & ctl = static_cast<mc_control::MCGlobalController &>(controller);
   ctl.controller().logger().addLogEntry("CurrentResidual_residual",
                                        [&, this]() { return this->residual; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_residual_high",
+                                       [&, this]() { return this->residual_high_; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_residual_low",
+                                       [&, this]() { return this->residual_low_; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_obstacleDetected",
+                                       [&, this]() { return this->obstacle_detected_; });
+}
+
+void CurrentResidual::addPlot(mc_control::MCGlobalController & controller)
+{
+  auto & ctl = static_cast<mc_control::MCGlobalController &>(controller);
+  auto & gui = *ctl.controller().gui();
+
+  gui.addPlot(
+      "CurrentResidual",
+      mc_rtc::gui::plot::X("t", [this]() { return counter_; }),
+      mc_rtc::gui::plot::Y("residual", [this]() { return residual_high_[residual_shown_]; }, mc_rtc::gui::Color::Gray),
+      mc_rtc::gui::plot::Y("residual", [this]() { return residual_low_[residual_shown_]; }, mc_rtc::gui::Color::Gray),
+      mc_rtc::gui::plot::Y("residual", [this]() { return residual[residual_shown_]; }, mc_rtc::gui::Color::Red)
+  );
 }
 
 } // namespace mc_plugin
