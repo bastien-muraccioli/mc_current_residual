@@ -46,7 +46,11 @@ void CurrentResidual::init(mc_control::MCGlobalController & controller, const mc
     };
   }
   threshold_filtering_ = plugin_config("threshold_filtering", 0.05);
-  threshold_offset_ = plugin_config("threshold_offset", 2.0);
+  threshold_offset_ = plugin_config("threshold_offset");
+  if(threshold_offset_.size() != jointNumber)
+  {
+    threshold_offset_ = Eigen::VectorXd::Constant(jointNumber, 10.0);
+  }
   lpf_threshold_.setValues(threshold_offset_, threshold_filtering_, jointNumber);
 
   // Get and print tau fric from datastore
@@ -112,10 +116,10 @@ void CurrentResidual::before(mc_control::MCGlobalController & controller)
     plot_added_ = true;
   }
 
-  if(ctl.controller().datastore().has("Zurlo Collision Detection"))
-  {
-    collision_stop_activated_zurlo_ = ctl.controller().datastore().get<bool>("Zurlo Collision Detection");
-  }
+  // if(ctl.controller().datastore().has("Zurlo Collision Detection"))
+  // {
+  //   collision_stop_activated_zurlo_ = ctl.controller().datastore().get<bool>("Zurlo Collision Detection");
+  // }
 
   residual_computation(controller);
   residual_high_ = lpf_threshold_.adaptiveThreshold(residual, true);
@@ -126,6 +130,7 @@ void CurrentResidual::before(mc_control::MCGlobalController & controller)
     if (residual[i] > residual_high_[i] || residual[i] < residual_low_[i])
     {
       obstacle_detected_ = true;
+      if(activate_verbose) mc_rtc::log::info("[Current Residual] Obstacle detected on joint {}", i);
       if (collision_stop_activated_)
       {
         ctl.controller().datastore().get<bool>("Obstacle detected") = obstacle_detected_;
@@ -133,10 +138,10 @@ void CurrentResidual::before(mc_control::MCGlobalController & controller)
       break;
     }
   }
-  if (collision_stop_activated_zurlo_)
-  {
+  // if (collision_stop_activated_zurlo_)
+  // {
     ctl.controller().datastore().get<bool>("Current Residual Obstacle detected") = obstacle_detected_;
-  }
+  // }
 }
 
 void CurrentResidual::after(mc_control::MCGlobalController & controller)
@@ -234,17 +239,19 @@ void CurrentResidual::addGui(mc_control::MCGlobalController & controller)
         this->residual.setZero();
         this->k_obs = k;
       }),
-    mc_rtc::gui::NumberInput("Residual shown", [this]() { return residual_shown_; },
+    mc_rtc::gui::IntegerInput("Residual shown", [this]() { return residual_shown_; },
       [this](int r) 
       {
         this->residual_shown_ = r;
       }),
     mc_rtc::gui::Button("Add plot", [this]() { return activate_plot_ = true; }),
     // Add checkbox to activate the collision stop
-    mc_rtc::gui::Checkbox("Collision stop", collision_stop_activated_), 
+    mc_rtc::gui::Checkbox("Collision stop", collision_stop_activated_),
+    mc_rtc::gui::Checkbox("Verbose", activate_verbose), 
     // Add Threshold offset input
-    mc_rtc::gui::NumberInput("Threshold offset", [this](){return this->threshold_offset_;},
-        [this](double offset)
+    mc_rtc::gui::ArrayInput("Threshold offset", {"q_0", "q_1", "q_2", "q_3", "q_4", "q_5", "q_6"}, 
+      [this](){return this->threshold_offset_;},
+        [this](const Eigen::VectorXd & offset)
       { 
         threshold_offset_ = offset;
         lpf_threshold_.setOffset(threshold_offset_); 
