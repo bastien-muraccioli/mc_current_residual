@@ -92,7 +92,7 @@ void CurrentResidual::init(mc_control::MCGlobalController & controller, const mc
   inertiaMatrix = forwardDynamics.H() - forwardDynamics.HIr();
   pzero = inertiaMatrix * qdot;
 
-  mc_rtc::log::info("[CurrentResidua] inertiaMatrix: {}, pzero: {}", inertiaMatrix, pzero);
+  // mc_rtc::log::info("[CurrentResidua] inertiaMatrix: {}, pzero: {}", inertiaMatrix, pzero);
 
   addGui(ctl);
   addLog(ctl);
