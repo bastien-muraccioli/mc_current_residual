@@ -83,7 +83,7 @@ void CurrentResidual::init(mc_control::MCGlobalController & controller, const mc
   forwardDynamics = rbd::ForwardDynamics(robot.mb());
 
   forwardDynamics.computeH(robot.mb(), robot.mbc());
-  inertiaMatrix = forwardDynamics.H() - forwardDynamics.HIr();
+  inertiaMatrix = forwardDynamics.H();
   pzero = inertiaMatrix * qdot;
 
   // mc_rtc::log::info("[CurrentResidua] inertiaMatrix: {}, pzero: {}", inertiaMatrix, pzero);
@@ -192,7 +192,7 @@ void CurrentResidual::residual_computation(mc_control::MCGlobalController & cont
   auto coriolisGravityTerm = forwardDynamics.C(); // C*qdot + g
 
   auto inertiaMatrix_prev = inertiaMatrix;
-  inertiaMatrix = forwardDynamics.H() - forwardDynamics.HIr();
+  inertiaMatrix = forwardDynamics.H();
   auto inertiaMatrix_dot = (inertiaMatrix - inertiaMatrix_prev) * ctl.timestep();
   auto pt = inertiaMatrix * qdot; // Momentum
   auto beta_regressor = coriolisGravityTerm - inertiaMatrix_dot * qdot + tau_fric;
@@ -253,8 +253,13 @@ void CurrentResidual::addLog(mc_control::MCGlobalController & controller)
 {
   auto & ctl = static_cast<mc_control::MCGlobalController &>(controller);
   ctl.controller().logger().addLogEntry("CurrentResidual_residual", [&, this]() { return this->residual; });
-  ctl.controller().logger().addLogEntry("CurrentResidual_residual_high", [&, this]() { return this->residual_high_; });
-  ctl.controller().logger().addLogEntry("CurrentResidual_residual_low", [&, this]() { return this->residual_low_; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_k_obs", [&, this]() { return this->k_obs; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_threshold_high", [&, this]() { return this->residual_high_; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_threshold_low", [&, this]() { return this->residual_low_; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_threshold_offset",
+                                        [&, this]() { return this->threshold_offset_; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_threshold_filtering",
+                                        [&, this]() { return this->threshold_filtering_; });
   ctl.controller().logger().addLogEntry("CurrentResidual_obstacleDetected",
                                         [&, this]() { return this->obstacle_detected_; });
 }
