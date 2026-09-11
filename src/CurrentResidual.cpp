@@ -78,6 +78,9 @@ void CurrentResidual::init(mc_control::MCGlobalController & controller, const mc
   residual_high_.setZero(jointNumber);
   residual_low_.setZero(jointNumber);
   integralTerm.setZero(jointNumber);
+  tau_m.setZero(jointNumber);
+  beta_regressor.setZero(jointNumber);
+  pt.setZero(jointNumber);
 
   coriolis = new rbd::Coriolis(robot.mb());
   forwardDynamics = rbd::ForwardDynamics(robot.mb());
@@ -165,7 +168,7 @@ void CurrentResidual::residual_computation(mc_control::MCGlobalController & cont
     tau_fric.setZero(jointNumber);
   }
 
-  Eigen::VectorXd tau_m = Eigen::VectorXd::Zero(jointNumber);
+  tau_m = Eigen::VectorXd::Zero(jointNumber);
 
   int jointIndex = 0;
   for(auto const & [key, val] : kt)
@@ -194,8 +197,8 @@ void CurrentResidual::residual_computation(mc_control::MCGlobalController & cont
   auto inertiaMatrix_prev = inertiaMatrix;
   inertiaMatrix = forwardDynamics.H();
   auto inertiaMatrix_dot = (inertiaMatrix - inertiaMatrix_prev) * ctl.timestep();
-  auto pt = inertiaMatrix * qdot; // Momentum
-  auto beta_regressor = coriolisGravityTerm - inertiaMatrix_dot * qdot + tau_fric;
+  pt = inertiaMatrix * qdot; // Momentum
+  beta_regressor = coriolisGravityTerm - pt + tau_fric;
 
   integralTerm += (tau_m - beta_regressor + residual) * ctl.timestep();
 
@@ -262,6 +265,10 @@ void CurrentResidual::addLog(mc_control::MCGlobalController & controller)
                                         [&, this]() { return this->threshold_filtering_; });
   ctl.controller().logger().addLogEntry("CurrentResidual_obstacleDetected",
                                         [&, this]() { return this->obstacle_detected_; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_tau_m", [&, this]() { return this->tau_m; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_beta_regressor", [&, this]() { return this->beta_regressor; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_pt", [&, this]() { return this->pt; });
+  ctl.controller().logger().addLogEntry("CurrentResidual_pzero", [&, this]() { return this->pzero; });
 }
 
 void CurrentResidual::addPlot(mc_control::MCGlobalController & controller)

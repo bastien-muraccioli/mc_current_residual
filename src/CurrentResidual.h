@@ -5,11 +5,10 @@
 #pragma once
 
 #include <mc_control/GlobalPlugin.h>
+#include "LpfThreshold.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <map>
 #include <string>
-#include "LpfThreshold.h"
-
 
 #include <RBDyn/Coriolis.h>
 #include <RBDyn/FA.h>
@@ -53,10 +52,14 @@ private:
   std::map<std::string, double> kt;
   Eigen::VectorXd tau_fric;
   Eigen::VectorXd integralTerm;
-  Eigen::VectorXd pzero; //momentum_init
+  Eigen::VectorXd pzero; // momentum_init
   Eigen::VectorXd residual;
-  double k_obs; //observer gain
+  double k_obs; // observer gain
   Eigen::MatrixXd inertiaMatrix;
+
+  Eigen::VectorXd tau_m;
+  Eigen::VectorXd beta_regressor;
+  Eigen::VectorXd pt;
 
   LpfThreshold lpf_threshold_;
   Eigen::VectorXd threshold_offset_;
